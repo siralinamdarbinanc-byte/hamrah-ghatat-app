@@ -15,7 +15,6 @@ import java.io.InputStreamReader
 import java.text.DecimalFormat
 
 data class Product(val name: String, val brand: String, val price: Long, val code: String = "") {
-    // کلید یکتا برای تشخیص تکراری بودن
     fun uniqueKey(): String = "${normalizeText(name)}|${normalizeText(brand)}"
 }
 
@@ -31,7 +30,6 @@ class MainActivity : AppCompatActivity() {
         private const val PREFS_NAME = "YadakMarketPrefs"
         private const val KEY_PRODUCTS = "cached_products_json"
         
-        // نرمال‌سازی برای مقایسه یکتا
         fun normalizeText(text: String): String {
             return text.trim().lowercase()
                 .replace("ي", "ی").replace("ك", "ک")
@@ -39,11 +37,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // لانچر انتخاب فایل
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
-        if (uri != null) processCSVFile(uri)
+        if (uri != null) processCSVUpdate(uri)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -71,7 +68,8 @@ class MainActivity : AppCompatActivity() {
         adapter = ProductAdapter(this, emptyList())
         listView.adapter = adapter
         
-        loadFromCacheOrAssets()
+        // ✅ لود هوشمند: اول کش، اگر نبود از Assets
+        loadInitialData()
         
         searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
             override fun onQueryTextSubmit(query: String?): Boolean {
@@ -87,9 +85,10 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // --- لود اولیه (اول کش، بعد Assets) ---
-    private fun loadFromCacheOrAssets() {
+    private fun loadInitialData() {
+        // تلاش برای لود از کش (سریع‌ترین حالت)
         if (!loadFromCache()) {
+            // اگر کش نبود، لود از Assets (حالت آفلاین پایه)
             try {
                 val inputStream = assets.open("products.csv")
                 val reader = CSVReader(InputStreamReader(inputStream, "UTF-8"))
@@ -101,23 +100,22 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 reader.close()
-                saveToCache(allProducts)
+                saveToCache(allProducts) // ذخیره در کش برای دفعات بعد
                 showAllProducts()
             } catch (e: Exception) {
-                adapter.updateData(listOf(Product("خطا در خواندن فایل پیش‌فرض", "", 0)).toMutableList())
+                adapter.updateData(listOf(Product("خطا در خواندن فایل پایه", "", 0)).toMutableList())
             }
         }
     }
 
-    // --- پردازش فایل CSV انتخاب شده توسط کاربر ---
-    private fun processCSVFile(uri: Uri) {
+    private fun processCSVUpdate(uri: Uri) {
         try {
             val inputStream = contentResolver.openInputStream(uri)!!
             val reader = CSVReader(InputStreamReader(inputStream, "UTF-8"))
             val newRows = reader.readAll()
             
-            // ساخت مپ از محصولات فعلی بر اساس کلید یکتا
-            val existingMap = mutableMapOf<String, Int>() // key -> index in allProducts
+            // ساخت مپ سریع برای جستجوی O(1)
+            val existingMap = mutableMapOf<String, Int>()
             for ((index, product) in allProducts.withIndex()) {
                 existingMap[product.uniqueKey()] = index
             }
@@ -125,7 +123,6 @@ class MainActivity : AppCompatActivity() {
             var addedCount = 0
             var updatedCount = 0
             
-            // پردازش ردیف‌های جدید (از ردیف دوم چون اولی هدر هست)
             for (i in 1 until newRows.size) {
                 val row = newRows[i]
                 if (row.size < 3 || row[0].trim().isEmpty()) continue
@@ -134,12 +131,9 @@ class MainActivity : AppCompatActivity() {
                 val key = newProduct.uniqueKey()
                 
                 if (existingMap.containsKey(key)) {
-                    // ✅ آپدیت قیمت محصول موجود
-                    val idx = existingMap[key]!!
-                    allProducts[idx] = newProduct
+                    allProducts[existingMap[key]!!] = newProduct
                     updatedCount++
                 } else {
-                    // ✅ افزودن محصول کاملاً جدید
                     allProducts.add(newProduct)
                     addedCount++
                 }
@@ -153,17 +147,17 @@ class MainActivity : AppCompatActivity() {
             saveToCache(allProducts)
             showAllProducts()
             
-            // نمایش پیام نتیجه
+            // نمایش گزارش
             adapter.updateData(
                 listOf(
                     Product("✅ بروزرسانی موفق!", "", 0),
-                    Product("محصولات جدید: $addedCount | قیمت‌های آپدیت شده: $updatedCount", "", 0),
-                    Product("تعداد کل قطعات: ${allProducts.size}", "", 0)
+                    Product("جدید: $addedCount | آپدیت شده: $updatedCount", "", 0),
+                    Product("کل قطعات: ${allProducts.size}", "", 0)
                 ).toMutableList()
             )
             
         } catch (e: Exception) {
-            adapter.updateData(listOf(Product(" خطا در خواندن فایل: ${e.message}", "", 0)).toMutableList())
+            adapter.updateData(listOf(Product("❌ خطا: ${e.message}", "", 0)).toMutableList())
         }
     }
 
@@ -176,7 +170,6 @@ class MainActivity : AppCompatActivity() {
         return Product(name, brand, price, code)
     }
 
-    // --- کش ---
     private fun loadFromCache(): Boolean {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val json = prefs.getString(KEY_PRODUCTS, null)
@@ -200,7 +193,6 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString(KEY_PRODUCTS, json).apply()
     }
 
-    // --- جستجو ---
     private fun performSmartSearch(q: String) {
         if (allProducts.isEmpty()) return
         val normalizedQuery = normalizeText(q)
@@ -220,7 +212,6 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    // --- UI ---
     private fun getBrandColor(brand: String): Int {
         if (brand.isBlank()) return android.graphics.Color.GRAY
         val hash = brand.hashCode()
