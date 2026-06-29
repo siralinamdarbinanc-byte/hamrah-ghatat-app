@@ -71,7 +71,7 @@ class MainActivity : AppCompatActivity() {
             }
             
             progressText = TextView(this@MainActivity).apply {
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.MATCH_HEIGHT)
+                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, -2)
                 textSize = 12f
                 visibility = View.GONE
             }
