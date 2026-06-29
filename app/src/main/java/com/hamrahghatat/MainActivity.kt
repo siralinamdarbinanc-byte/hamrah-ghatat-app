@@ -45,11 +45,11 @@ class MainActivity : AppCompatActivity() {
         adapter = ProductAdapter(this, emptyList())
         listView.adapter = adapter
         
-        // اول لود از کش
+        // ✅ مرحله ۱: لود فوری از کش (آفلاین) - بدون هیچ معطلی
         loadFromCache()
         
-        // بعد دانلود کامل دیتا
-        fetchAllDataFromAPI()
+        // ✅ مرحله ۲: سینک در پس‌زمینه (آنلاین) - کاربر متوجه نمیشه
+        syncInBackground()
         
         searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
             override fun onQueryTextSubmit(query: String?): Boolean {
@@ -64,6 +64,7 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
+    // --- مدیریت کش و سینک ---
     private fun loadFromCache() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val json = prefs.getString(KEY_PRODUCTS, null)
@@ -74,8 +75,11 @@ class MainActivity : AppCompatActivity() {
                 val cached: List<Product> = gson.fromJson(json, type)
                 allProducts.clear()
                 allProducts.addAll(cached)
-                showAllProducts()
+                showAllProducts() // نمایش فوری
             } catch (e: Exception) {}
+        } else {
+            // فقط اگر اولین باره و کش نداریم، پیام لودینگ نشون بده
+            adapter.updateData(listOf(Product("در حال آماده‌سازی...", "", 0)))
         }
     }
 
@@ -85,76 +89,44 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString(KEY_PRODUCTS, json).apply()
     }
 
-    // دانلود تمام دیتا با پشتیبانی از Pagination
-    private fun fetchAllDataFromAPI() {
-        if (allProducts.isEmpty()) {
-            adapter.updateData(listOf(Product("در حال دریافت اطلاعات...", "", 0)))
-        }
-
-        val client = OkHttpClient()
-        val allFetched = mutableListOf<Product>()
-        var offset = 0
-        val limit = 100 // هر درخواست ۱۰۰ تا
+    private fun syncInBackground() {
+        // استفاده از URL ساده برای گرفتن آخرین دیتا (بدون Pagination پیچیده)
+        // اگر API محدودیت داره، اینجا باید منطق Paginated رو بذاری
+        val url = "https://price-api-v2.aliinndd2.workers.dev/search?q=" 
         
-        // تابع بازگشتی برای گرفتن همه صفحات
-        fun fetchPage() {
-            val url = "https://price-api-v2.aliinndd2.workers.dev/search?q=&offset=$offset&limit=$limit"
-            client.newCall(Request.Builder().url(url).build()).enqueue(object : okhttp3.Callback {
-                override fun onFailure(call: okhttp3.Call, e: IOException) {
-                    runOnUiThread { 
-                        if (allProducts.isEmpty() && allFetched.isEmpty()) {
-                            adapter.updateData(listOf(Product("خطا در اتصال", "", 0)))
-                        }
-                    }
-                }
-                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                    val body = response.body?.string() ?: return
-                    try {
-                        val gson = Gson()
-                        val apiResponse = gson.fromJson(body, ApiResponse::class.java)
-                        if (apiResponse.success && apiResponse.data.isNotEmpty()) {
-                            allFetched.addAll(apiResponse.data)
-                            offset += limit
-                            
-                            // اگر هنوز دیتا هست، صفحه بعدی رو بگیر
-                            if (apiResponse.data.size >= limit) {
-                                fetchPage()
-                            } else {
-                                // تمام شد! ذخیره و نمایش
-                                runOnUiThread {
-                                    allProducts.clear()
-                                    allProducts.addAll(allFetched)
-                                    saveToCache(allProducts)
-                                    showAllProducts()
-                                }
-                            }
-                        } else {
-                            // دیتا تموم شد
-                            runOnUiThread {
-                                if (allFetched.isNotEmpty()) {
-                                    allProducts.clear()
-                                    allProducts.addAll(allFetched)
-                                    saveToCache(allProducts)
-                                    showAllProducts()
-                                } else if (allProducts.isEmpty()) {
-                                    adapter.updateData(listOf(Product("دیتایی یافت نشد", "", 0)))
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        runOnUiThread { 
-                            if (allProducts.isEmpty()) {
-                                adapter.updateData(listOf(Product("خطا در پردازش", "", 0)))
+        OkHttpClient().newCall(Request.Builder().url(url).build()).enqueue(object : okhttp3.Callback {
+            override fun onFailure(call: okhttp3.Call, e: IOException) {
+                // اینترنت نیست یا سرور.down -> هیچ کاری نکن، کش قبلی فعاله
+            }
+            
+            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                val body = response.body?.string() ?: return
+                try {
+                    val gson = Gson()
+                    val apiResponse = gson.fromJson(body, ApiResponse::class.java)
+                    
+                    if (apiResponse.success && apiResponse.data.isNotEmpty()) {
+                        runOnUiThread {
+                            // بررسی کنیم آیا دیتا واقعاً جدیدتره؟ (ساده‌ترین راه: مقایسه تعداد)
+                            // در نسخه پیشرفته‌تر می‌تونیم timestamp یا hash رو چک کنیم
+                            if (apiResponse.data.size != allProducts.size || 
+                                apiResponse.data.firstOrNull()?.price != allProducts.firstOrNull()?.price) {
+                                
+                                allProducts.clear()
+                                allProducts.addAll(apiResponse.data)
+                                saveToCache(allProducts) // ذخیره آپدیت جدید
+                                showAllProducts() // رفرش لیست نمایشی
                             }
                         }
                     }
+                } catch (e: Exception) { 
+                    // خطا در پارس -> کش قبلی دست نخورده باقی می‌مونه
                 }
-            })
-        }
-        
-        fetchPage()
+            }
+        })
     }
 
+    // --- رابط کاربری و جستجو ---
     private fun getBrandColor(brand: String): Int {
         if (brand.isBlank()) return android.graphics.Color.GRAY
         val hash = brand.hashCode()
