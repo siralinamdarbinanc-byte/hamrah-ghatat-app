@@ -24,7 +24,10 @@ class MainActivity : AppCompatActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        listView = ListView(this).apply { id = 1; setTypeface(android.graphics.Typeface.MONOSPACE) }
+        listView = ListView(this).apply { 
+            id = 1 
+            typeface = android.graphics.Typeface.MONOSPACE 
+        }
         searchView = SearchView(this).apply { id = 2; queryHint = "جستجوی قطعه (مثال: چراغ جلوی پژو)..." }
         
         val layout = android.widget.LinearLayout(this).apply { 
