@@ -30,9 +30,13 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         listView = ListView(this).apply { id = 1 }
+        
+        // تنظیمات SearchView با آیکون و قابلیت تمرکز خودکار
         searchView = SearchView(this).apply { 
             id = 2
-            queryHint = "جستجوی قطعه (مثال: چراغ جلوی پژو)..." 
+            queryHint = "جستجوی قطعه..." 
+            isIconified = false // همیشه باز بمونه
+            requestFocus()
         }
         
         val layout = android.widget.LinearLayout(this).apply { 
@@ -45,18 +49,19 @@ class MainActivity : AppCompatActivity() {
         adapter = ProductAdapter(this, emptyList())
         listView.adapter = adapter
         
-        // ✅ مرحله ۱: لود فوری از کش (آفلاین) - بدون هیچ معطلی
         loadFromCache()
-        
-        // ✅ مرحله ۲: سینک در پس‌زمینه (آنلاین) - کاربر متوجه نمیشه
         syncInBackground()
         
+        // تنظیم لیسنر برای سرچ همزمان + دکمه سرچ
         searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
             override fun onQueryTextSubmit(query: String?): Boolean {
-                query?.let { performSmartSearch(it) }
+                // وقتی دکمه سرچ زده شد
+                performSmartSearch(query ?: "")
+                searchView.clearFocus() // بستن کیبورد بعد از سرچ
                 return true
             }
             override fun onQueryTextChange(newText: String?): Boolean {
+                // سرچ آنی هنگام تایپ
                 if (newText.isNullOrBlank()) showAllProducts() 
                 else performSmartSearch(newText)
                 return true
@@ -64,7 +69,6 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // --- مدیریت کش و سینک ---
     private fun loadFromCache() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val json = prefs.getString(KEY_PRODUCTS, null)
@@ -75,10 +79,9 @@ class MainActivity : AppCompatActivity() {
                 val cached: List<Product> = gson.fromJson(json, type)
                 allProducts.clear()
                 allProducts.addAll(cached)
-                showAllProducts() // نمایش فوری
+                showAllProducts()
             } catch (e: Exception) {}
         } else {
-            // فقط اگر اولین باره و کش نداریم، پیام لودینگ نشون بده
             adapter.updateData(listOf(Product("در حال آماده‌سازی...", "", 0)))
         }
     }
@@ -90,43 +93,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun syncInBackground() {
-        // استفاده از URL ساده برای گرفتن آخرین دیتا (بدون Pagination پیچیده)
-        // اگر API محدودیت داره، اینجا باید منطق Paginated رو بذاری
-        val url = "https://price-api-v2.aliinndd2.workers.dev/search?q=" 
-        
+        val url = "https://price-api-v2.aliinndd2.workers.dev/search?q=ی"
         OkHttpClient().newCall(Request.Builder().url(url).build()).enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: IOException) {
-                // اینترنت نیست یا سرور.down -> هیچ کاری نکن، کش قبلی فعاله
-            }
-            
+            override fun onFailure(call: okhttp3.Call, e: IOException) {}
             override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
                 val body = response.body?.string() ?: return
                 try {
                     val gson = Gson()
                     val apiResponse = gson.fromJson(body, ApiResponse::class.java)
-                    
                     if (apiResponse.success && apiResponse.data.isNotEmpty()) {
                         runOnUiThread {
-                            // بررسی کنیم آیا دیتا واقعاً جدیدتره؟ (ساده‌ترین راه: مقایسه تعداد)
-                            // در نسخه پیشرفته‌تر می‌تونیم timestamp یا hash رو چک کنیم
                             if (apiResponse.data.size != allProducts.size || 
                                 apiResponse.data.firstOrNull()?.price != allProducts.firstOrNull()?.price) {
-                                
                                 allProducts.clear()
                                 allProducts.addAll(apiResponse.data)
-                                saveToCache(allProducts) // ذخیره آپدیت جدید
-                                showAllProducts() // رفرش لیست نمایشی
+                                saveToCache(allProducts)
+                                showAllProducts()
                             }
                         }
                     }
-                } catch (e: Exception) { 
-                    // خطا در پارس -> کش قبلی دست نخورده باقی می‌مونه
-                }
+                } catch (e: Exception) {}
             }
         })
     }
 
-    // --- رابط کاربری و جستجو ---
     private fun getBrandColor(brand: String): Int {
         if (brand.isBlank()) return android.graphics.Color.GRAY
         val hash = brand.hashCode()
