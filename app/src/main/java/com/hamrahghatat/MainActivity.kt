@@ -86,23 +86,15 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadInitialData() {
+        // ✅ فقط از کش لود میکنیم. اگر کش نبود، لیست خالی نشون میدیم
         if (!loadFromCache()) {
-            try {
-                val inputStream = assets.open("products.csv")
-                val reader = CSVReader(InputStreamReader(inputStream, "UTF-8"))
-                val rows = reader.readAll()
-                for (i in 1 until rows.size) {
-                    val row = rows[i]
-                    if (row.size >= 3 && row[0].trim().isNotEmpty()) {
-                        allProducts.add(parseRow(row))
-                    }
-                }
-                reader.close()
-                saveToCache(allProducts)
-                showAllProducts()
-            } catch (e: Exception) {
-                adapter.updateData(listOf(Product("خطا در خواندن فایل پایه", "", 0)).toMutableList())
-            }
+            adapter.updateData(
+                listOf(
+                    Product("👋 به یدک مارکت زینلی خوش آمدید!", "", 0),
+                    Product("برای شروع، دکمه زیر را بزنید و فایل CSV را انتخاب کنید:", "", 0),
+                    Product("📂 بروزرسانی از فایل CSV", "", 0)
+                ).toMutableList()
+            )
         }
     }
 
