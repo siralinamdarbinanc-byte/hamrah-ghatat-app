@@ -27,14 +27,15 @@ jobs:
           sdkmanager "build-tools;34.0.0"
           sdkmanager --licenses
 
-      - name: Make gradlew executable
-        run: chmod +x gradlew
+      - name: Install Gradle
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gradle
 
-      - name: Clean build
-        run: ./gradlew clean
-
-      - name: Build APK
-        run: ./gradlew assembleRelease --stacktrace
+      - name: Build APK with system Gradle
+        run: |
+          chmod +x gradlew
+          gradle clean assembleRelease
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
