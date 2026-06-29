@@ -299,14 +299,34 @@ class MainActivity : AppCompatActivity() {
     
     private fun performSmartSearch(q: String) {
         if (allProducts.isEmpty()) return
-        val keys = q.split(" ").filter { it.length > 1 }.map { it.trim() }
+        var keys = q.split(" ").filter { it.length > 1 }.map { it.trim().lowercase() }
         if (keys.isEmpty()) { showAllProducts(); return }
-        val scored = allProducts.mapNotNull { pr ->
-            val ln = pr.name.lowercase()
-            val sc = keys.count { k -> ln.contains(k.lowercase()) }
-            if (sc > 0) Pair(sc, pr) else null
+        
+        // مرتب‌سازی کلمات: کلمات کوتاه‌تر اول بیان تا فیلتر اولیه وسیع‌تر باشه
+        keys = keys.sortedBy { it.length }
+        
+        // شروع با کل لیست
+        var currentList = allProducts
+        
+        // اعمال فیلتر آبشاری
+        for (key in keys) {
+            currentList = currentList.filter { 
+                it.name.lowercase().contains(key) || 
+                it.brand.lowercase().contains(key) 
+            }
+            // اگر وسط کار لیست خالی شد، دیگه ادامه نده
+            if (currentList.isEmpty()) break
+        }
+        
+        // امتیازدهی نهایی برای مرتب‌سازی بهتر نتایج باقی‌مونده
+        val scored = currentList.map { pr ->
+            val score = keys.count { k -> pr.name.lowercase().contains(k) }
+            Pair(score, pr)
         }.sortedByDescending { it.first }
         
-        adapter.updateData(if (scored.isEmpty()) listOf(Product("یافت نشد", "", 0)) else scored.map { it.second })
+        adapter.updateData(
+            if (scored.isEmpty()) listOf(Product("محصولی با این مشخصات یافت نشد", "", 0)) 
+            else scored.map { it.second }
+        )
     }
 }
