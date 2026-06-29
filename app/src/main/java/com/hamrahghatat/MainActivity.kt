@@ -18,8 +18,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var listView: ListView
     private lateinit var searchView: SearchView
     private val allProducts = mutableListOf<Product>() // لیست کامل دانلود شده
-    private val displayList = mutableListOf<String>() // لیست نمایشی
-    private val adapter by lazy { ArrayAdapter(this, android.R.layout.simple_list_item_1, displayList) }
+    private lateinit var adapter: ProductAdapter
     private val fmt = DecimalFormat("#,##0")
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,6 +34,7 @@ class MainActivity : AppCompatActivity() {
             addView(searchView); addView(listView) 
         }
         setContentView(layout)
+        adapter = ProductAdapter(this, emptyList())
         listView.adapter = adapter
         
         // دانلود اولیه همه محصولات
@@ -63,9 +63,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAllProducts() {
-        displayList.clear()
-        displayList.addAll(allProducts.map { formatProduct(it) })
-        adapter.notifyDataSetChanged()
+        adapter.updateData(allProducts)
     }
 
     // موتور جستجوی هوشمند با امتیازدهی
@@ -86,19 +84,19 @@ class MainActivity : AppCompatActivity() {
         // مرتب‌سازی: بیشترین امتیاز اول
         val sorted = scoredProducts.sortedByDescending { it.first }
         
-        displayList.clear()
         if (sorted.isEmpty()) {
-            displayList.add("محصولی با این مشخصات یافت نشد")
+            adapter.updateData(emptyList())
+            // اضافه کردن پیام خالی بودن به صورت موقت
+            val emptyMsg = Product("محصولی یافت نشد", "", 0)
+            adapter.updateData(listOf(emptyMsg))
         } else {
-            displayList.addAll(sorted.map { formatProduct(it.second) })
+            adapter.updateData(sorted.map { it.second })
         }
-        adapter.notifyDataSetChanged()
     }
 
     private fun fetchAllProducts() {
-        displayList.clear()
-        displayList.add("در حال بارگذاری catalog...")
-        adapter.notifyDataSetChanged()
+        val loadingProduct = Product("در حال دریافت اطلاعات...", "", 0)
+        adapter.updateData(listOf(loadingProduct))
 
         // استفاده از کاراکتر رایج برای گرفتن حداکثر رکورد
         OkHttpClient().newCall(
@@ -106,9 +104,8 @@ class MainActivity : AppCompatActivity() {
         ).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: IOException) {
                 runOnUiThread { 
-                    displayList.clear()
-                    displayList.add("خطا در اتصال به سرور: ${e.message}") 
-                    adapter.notifyDataSetChanged()
+                    val errorProduct = Product("خطا در اتصال: ${e.message}", "", 0)
+                    adapter.updateData(listOf(errorProduct))
                 }
             }
             override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
@@ -126,9 +123,8 @@ class MainActivity : AppCompatActivity() {
                     }
                 } catch (e: Exception) {
                     runOnUiThread { 
-                        displayList.clear()
-                        displayList.add("خطا در پردازش دیتا: ${e.message}") 
-                        adapter.notifyDataSetChanged()
+                        val errorProduct = Product("خطا در پردازش: ${e.message}", "", 0)
+                        adapter.updateData(listOf(errorProduct))
                     }
                 }
             }
