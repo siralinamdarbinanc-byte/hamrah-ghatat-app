@@ -1,6 +1,5 @@
 name: Build Android APK
 
-# Updated to use gradlew instead of system gradle
 on:
   push:
     branches: [ main ]
@@ -28,13 +27,13 @@ jobs:
           sdkmanager "build-tools;34.0.0"
           sdkmanager --licenses
 
-      - name: Build APK
+      - name: Build Debug APK
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug
 
-      - name: Upload APK
+      - name: Upload Debug APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-release
-          path: app/build/outputs/apk/release/*.apk
+          name: app-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
