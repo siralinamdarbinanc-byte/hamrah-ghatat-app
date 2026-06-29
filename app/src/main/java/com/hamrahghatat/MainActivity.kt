@@ -12,7 +12,7 @@ import okhttp3.Request
 import java.io.IOException
 import java.text.DecimalFormat
 
-data class ApiResponse(val success: Boolean, val data: List<Product>)
+data class ApiResponse(val success: Boolean, val data: List<Product>, val count: Int = 0)
 data class Product(val name: String, val brand: String, val price: Long, val code: String = "")
 
 class MainActivity : AppCompatActivity() {
@@ -22,7 +22,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: ProductAdapter
     private val fmt = DecimalFormat("#,##0")
     
-    // کلید ذخیره‌سازی در SharedPreferences
     companion object {
         private const val PREFS_NAME = "YadakMarketPrefs"
         private const val KEY_PRODUCTS = "cached_products_json"
@@ -46,11 +45,11 @@ class MainActivity : AppCompatActivity() {
         adapter = ProductAdapter(this, emptyList())
         listView.adapter = adapter
         
-        // ۱. اول لود از کش (آفلاین)
+        // اول لود از کش
         loadFromCache()
         
-        // ۲. بعد سینک با سرور (آنلاین - در پس‌زمینه)
-        fetchAndSyncProducts()
+        // بعد دانلود کامل دیتا
+        fetchAllDataFromAPI()
         
         searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
             override fun onQueryTextSubmit(query: String?): Boolean {
@@ -65,7 +64,6 @@ class MainActivity : AppCompatActivity() {
         })
     }
 
-    // --- مدیریت کش و سینک ---
     private fun loadFromCache() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val json = prefs.getString(KEY_PRODUCTS, null)
@@ -77,7 +75,7 @@ class MainActivity : AppCompatActivity() {
                 allProducts.clear()
                 allProducts.addAll(cached)
                 showAllProducts()
-            } catch (e: Exception) { /* کش خرابه، نادیده بگیر */ }
+            } catch (e: Exception) {}
         }
     }
 
@@ -87,43 +85,76 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString(KEY_PRODUCTS, json).apply()
     }
 
-    private fun fetchAndSyncProducts() {
-        // فقط اگر لیست خالی بود پیام لودینگ نشون بده
+    // دانلود تمام دیتا با پشتیبانی از Pagination
+    private fun fetchAllDataFromAPI() {
         if (allProducts.isEmpty()) {
             adapter.updateData(listOf(Product("در حال دریافت اطلاعات...", "", 0)))
         }
 
-        OkHttpClient().newCall(
-            Request.Builder().url("https://price-api-v2.aliinndd2.workers.dev/search?q=").build()
-        ).enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: IOException) {
-                // اگر اینترنت نبود و کش هم نداشتیم
-                runOnUiThread { 
-                    if (allProducts.isEmpty()) {
-                        adapter.updateData(listOf(Product("بدون اینترنت و بدون کش!", "", 0)))
-                    }
-                }
-            }
-            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                val body = response.body?.string() ?: return
-                android.util.Log.d("YadakMarket", "API Response length: ${body.length}")
-                try {
-                    val gson = Gson()
-                    val apiResponse = gson.fromJson(body, ApiResponse::class.java)
-                    if (apiResponse.success && apiResponse.data.isNotEmpty()) {
-                        runOnUiThread {
-                            allProducts.clear()
-                            allProducts.addAll(apiResponse.data)
-                            saveToCache(allProducts) // ✅ ذخیره در کش
-                            showAllProducts()
+        val client = OkHttpClient()
+        val allFetched = mutableListOf<Product>()
+        var offset = 0
+        val limit = 100 // هر درخواست ۱۰۰ تا
+        
+        // تابع بازگشتی برای گرفتن همه صفحات
+        fun fetchPage() {
+            val url = "https://price-api-v2.aliinndd2.workers.dev/search?q=&offset=$offset&limit=$limit"
+            client.newCall(Request.Builder().url(url).build()).enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, e: IOException) {
+                    runOnUiThread { 
+                        if (allProducts.isEmpty() && allFetched.isEmpty()) {
+                            adapter.updateData(listOf(Product("خطا در اتصال", "", 0)))
                         }
                     }
-                } catch (e: Exception) { /* خطا در پارس، کش قبلی حفظ میشه */ }
-            }
-        })
+                }
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    val body = response.body?.string() ?: return
+                    try {
+                        val gson = Gson()
+                        val apiResponse = gson.fromJson(body, ApiResponse::class.java)
+                        if (apiResponse.success && apiResponse.data.isNotEmpty()) {
+                            allFetched.addAll(apiResponse.data)
+                            offset += limit
+                            
+                            // اگر هنوز دیتا هست، صفحه بعدی رو بگیر
+                            if (apiResponse.data.size >= limit) {
+                                fetchPage()
+                            } else {
+                                // تمام شد! ذخیره و نمایش
+                                runOnUiThread {
+                                    allProducts.clear()
+                                    allProducts.addAll(allFetched)
+                                    saveToCache(allProducts)
+                                    showAllProducts()
+                                }
+                            }
+                        } else {
+                            // دیتا تموم شد
+                            runOnUiThread {
+                                if (allFetched.isNotEmpty()) {
+                                    allProducts.clear()
+                                    allProducts.addAll(allFetched)
+                                    saveToCache(allProducts)
+                                    showAllProducts()
+                                } else if (allProducts.isEmpty()) {
+                                    adapter.updateData(listOf(Product("دیتایی یافت نشد", "", 0)))
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        runOnUiThread { 
+                            if (allProducts.isEmpty()) {
+                                adapter.updateData(listOf(Product("خطا در پردازش", "", 0)))
+                            }
+                        }
+                    }
+                }
+            })
+        }
+        
+        fetchPage()
     }
 
-    // --- رابط کاربری و جستجو ---
     private fun getBrandColor(brand: String): Int {
         if (brand.isBlank()) return android.graphics.Color.GRAY
         val hash = brand.hashCode()
