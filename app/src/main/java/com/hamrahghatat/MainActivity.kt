@@ -1,137 +1,193 @@
 package com.hamrahghatat
 
 import android.content.Context
+import android.net.Uri
 import android.os.Bundle
-import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ListView
-import android.widget.ProgressBar
 import android.widget.SearchView
-import android.widget.TextView
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.gson.Gson
-import com.google.gson.reflect.TypeToken
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import java.io.IOException
+import com.opencsv.CSVReader
+import java.io.InputStreamReader
 import java.text.DecimalFormat
 
-data class ApiResponse(val success: Boolean, val data: List<Product>, val count: Int = 0)
-data class Product(val name: String, val brand: String, val price: Long, val code: String = "")
+data class Product(val name: String, val brand: String, val price: Long, val code: String = "") {
+    // کلید یکتا برای تشخیص تکراری بودن
+    fun uniqueKey(): String = "${normalizeText(name)}|${normalizeText(brand)}"
+}
 
 class MainActivity : AppCompatActivity() {
     private lateinit var listView: ListView
     private lateinit var searchView: SearchView
-    private lateinit var downloadBtn: Button
-    private lateinit var progressBar: ProgressBar
-    private lateinit var progressText: TextView
+    private lateinit var updateBtn: Button
     private val allProducts = mutableListOf<Product>()
     private lateinit var adapter: ProductAdapter
     private val fmt = DecimalFormat("#,##0")
-    private var isOfflineMode = false
     
     companion object {
         private const val PREFS_NAME = "YadakMarketPrefs"
         private const val KEY_PRODUCTS = "cached_products_json"
+        
+        // نرمال‌سازی برای مقایسه یکتا
+        fun normalizeText(text: String): String {
+            return text.trim().lowercase()
+                .replace("ي", "ی").replace("ك", "ک")
+                .replace(Regex("[\s\.\(\)\-\/,\:]+"), "")
+        }
+    }
+
+    // لانچر انتخاب فایل
+    private val filePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) processCSVFile(uri)
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
-        // بررسی کش موجود
-        if (loadFromCache()) {
-            isOfflineMode = true
-        }
-
-        // ساخت UI
-        val rootLayout = LinearLayout(this).apply { 
-            orientation = LinearLayout.VERTICAL 
-        }
+        val rootLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         
         searchView = SearchView(this).apply { 
-            queryHint = "جستجوی آنلاین قطعه..."
+            queryHint = "جستجوی قطعه..."
             isIconified = false
         }
         
-        // بخش دانلود آفلاین
-        val downloadSection = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(16, 8, 16, 8)
-            
-            downloadBtn = Button(this@MainActivity).apply {
-                text = if (isOfflineMode) "آپدیت لیست آفلاین" else "دانلود لیست آفلاین"
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-            }
-            
-            progressBar = ProgressBar(this@MainActivity, null, android.R.attr.progressBarStyleHorizontal).apply {
-                layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                visibility = View.GONE
-                max = 100
-            }
-            
-            progressText = TextView(this@MainActivity).apply {
-                layoutParams = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, -2)
-                textSize = 12f
-                visibility = View.GONE
-            }
-            
-            addView(downloadBtn)
-            addView(progressBar)
-            addView(progressText)
+        updateBtn = Button(this).apply {
+            text = "📂 بروزرسانی از فایل CSV"
+            setOnClickListener { filePickerLauncher.launch("text/csv") }
         }
         
         listView = ListView(this)
         
         rootLayout.addView(searchView)
-        rootLayout.addView(downloadSection)
+        rootLayout.addView(updateBtn)
         rootLayout.addView(listView)
-        
         setContentView(rootLayout)
         
         adapter = ProductAdapter(this, emptyList())
         listView.adapter = adapter
         
-        // اگر کش داشتیم، نشون بده
-        if (isOfflineMode) {
-            showAllProducts()
-            searchView.queryHint = "جستجو در لیست آفلاین (${allProducts.size} قطعه)"
-        }
+        loadFromCacheOrAssets()
         
-        // رویداد دکمه دانلود
-        downloadBtn.setOnClickListener { startOfflineDownload() }
-        
-        // رویداد سرچ
         searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
             override fun onQueryTextSubmit(query: String?): Boolean {
-                if (isOfflineMode) performSmartSearch(query ?: "")
-                else fetchOnlineSearch(query ?: "")
+                performSmartSearch(query ?: "")
                 searchView.clearFocus()
                 return true
             }
             override fun onQueryTextChange(newText: String?): Boolean {
-                if (newText.isNullOrBlank()) {
-                    if (isOfflineMode) showAllProducts()
-                } else {
-                    if (isOfflineMode) performSmartSearch(newText)
-                    // در حالت آنلاین، سرچ آنی نداریم تا ترافیک هدر نره
-                }
+                if (newText.isNullOrBlank()) showAllProducts() 
+                else performSmartSearch(newText)
                 return true
             }
         })
     }
 
-    // --- مدیریت کش ---
+    // --- لود اولیه (اول کش، بعد Assets) ---
+    private fun loadFromCacheOrAssets() {
+        if (!loadFromCache()) {
+            try {
+                val inputStream = assets.open("products.csv")
+                val reader = CSVReader(InputStreamReader(inputStream, "UTF-8"))
+                val rows = reader.readAll()
+                for (i in 1 until rows.size) {
+                    val row = rows[i]
+                    if (row.size >= 3 && row[0].trim().isNotEmpty()) {
+                        allProducts.add(parseRow(row))
+                    }
+                }
+                reader.close()
+                saveToCache(allProducts)
+                showAllProducts()
+            } catch (e: Exception) {
+                adapter.updateData(listOf(Product("خطا در خواندن فایل پیش‌فرض", "", 0)).toMutableList())
+            }
+        }
+    }
+
+    // --- پردازش فایل CSV انتخاب شده توسط کاربر ---
+    private fun processCSVFile(uri: Uri) {
+        try {
+            val inputStream = contentResolver.openInputStream(uri)!!
+            val reader = CSVReader(InputStreamReader(inputStream, "UTF-8"))
+            val newRows = reader.readAll()
+            
+            // ساخت مپ از محصولات فعلی بر اساس کلید یکتا
+            val existingMap = mutableMapOf<String, Int>() // key -> index in allProducts
+            for ((index, product) in allProducts.withIndex()) {
+                existingMap[product.uniqueKey()] = index
+            }
+            
+            var addedCount = 0
+            var updatedCount = 0
+            
+            // پردازش ردیف‌های جدید (از ردیف دوم چون اولی هدر هست)
+            for (i in 1 until newRows.size) {
+                val row = newRows[i]
+                if (row.size < 3 || row[0].trim().isEmpty()) continue
+                
+                val newProduct = parseRow(row)
+                val key = newProduct.uniqueKey()
+                
+                if (existingMap.containsKey(key)) {
+                    // ✅ آپدیت قیمت محصول موجود
+                    val idx = existingMap[key]!!
+                    allProducts[idx] = newProduct
+                    updatedCount++
+                } else {
+                    // ✅ افزودن محصول کاملاً جدید
+                    allProducts.add(newProduct)
+                    addedCount++
+                }
+            }
+            
+            reader.close()
+            inputStream.close()
+            
+            // مرتب‌سازی و ذخیره
+            allProducts.sortBy { it.name }
+            saveToCache(allProducts)
+            showAllProducts()
+            
+            // نمایش پیام نتیجه
+            adapter.updateData(
+                listOf(
+                    Product("✅ بروزرسانی موفق!", "", 0),
+                    Product("محصولات جدید: $addedCount | قیمت‌های آپدیت شده: $updatedCount", "", 0),
+                    Product("تعداد کل قطعات: ${allProducts.size}", "", 0)
+                ).toMutableList()
+            )
+            
+        } catch (e: Exception) {
+            adapter.updateData(listOf(Product(" خطا در خواندن فایل: ${e.message}", "", 0)).toMutableList())
+        }
+    }
+
+    private fun parseRow(row: Array<String>): Product {
+        val name = row[0].trim()
+        val brand = row[1].trim()
+        val priceStr = row[2].trim().replace(",", "").replace(" ", "")
+        val price = priceStr.toLongOrNull() ?: 0L
+        val code = if (row.size > 3) row[3].trim() else ""
+        return Product(name, brand, price, code)
+    }
+
+    // --- کش ---
     private fun loadFromCache(): Boolean {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val json = prefs.getString(KEY_PRODUCTS, null)
         if (!json.isNullOrEmpty()) {
             try {
                 val gson = Gson()
-                val type = object : TypeToken<List<Product>>() {}.type
+                val type = com.google.gson.reflect.TypeToken.getParameterized(List::class.java, Product::class.java).type
                 val cached: List<Product> = gson.fromJson(json, type)
                 allProducts.clear()
                 allProducts.addAll(cached)
+                showAllProducts()
                 return true
             } catch (e: Exception) {}
         }
@@ -144,120 +200,27 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString(KEY_PRODUCTS, json).apply()
     }
 
-    // --- دانلود آفلاین با نوار پیشرفت ---
-    private fun startOfflineDownload() {
-        downloadBtn.isEnabled = false
-        progressBar.visibility = View.VISIBLE
-        progressText.visibility = View.VISIBLE
-        progressText.text = "در حال اتصال..."
-        
-        val client = OkHttpClient()
-        val fetched = mutableListOf<Product>()
-        var offset = 0
-        val limit = 200
-        
-        fun fetchPage() {
-            val url = "https://price-api-v2.aliinndd2.workers.dev/search?q=&offset=$offset&limit=$limit"
-            client.newCall(Request.Builder().url(url).build()).enqueue(object : okhttp3.Callback {
-                override fun onFailure(call: okhttp3.Call, e: IOException) {
-                    runOnUiThread { 
-                        progressText.text = "خطا در دانلود!"
-                        downloadBtn.isEnabled = true
-                    }
-                }
-                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                    val body = response.body?.string() ?: return
-                    try {
-                        val gson = Gson()
-                        val apiResp = gson.fromJson(body, ApiResponse::class.java)
-                        
-                        if (apiResp.success && apiResp.data.isNotEmpty()) {
-                            fetched.addAll(apiResp.data)
-                            offset += limit
-                            
-                            // آپدیت نوار پیشرفت
-                            val total = apiResp.count.coerceAtLeast(3637) // تخمین کل
-                            val percent = ((fetched.size.toFloat() / total) * 100).toInt().coerceAtMost(100)
-                            
-                            runOnUiThread {
-                                progressBar.progress = percent
-                                progressText.text = "$percent% (${fetched.size} قطعه)"
-                            }
-                            
-                            if (apiResp.data.size >= limit) {
-                                fetchPage() // صفحه بعدی
-                            } else {
-                                // دانلود تمام شد
-                                runOnUiThread {
-                                    allProducts.clear()
-                                    allProducts.addAll(fetched)
-                                    saveToCache(allProducts)
-                                    isOfflineMode = true
-                                    
-                                    progressBar.visibility = View.GONE
-                                    progressText.visibility = View.GONE
-                                    downloadBtn.text = "آپدیت لیست آفلاین"
-                                    downloadBtn.isEnabled = true
-                                    searchView.queryHint = "جستجو در لیست آفلاین (${allProducts.size} قطعه)"
-                                    showAllProducts()
-                                }
-                            }
-                        } else {
-                            // پایان دیتا
-                            runOnUiThread {
-                                if (fetched.isNotEmpty()) {
-                                    allProducts.clear(); allProducts.addAll(fetched)
-                                    saveToCache(allProducts); isOfflineMode = true
-                                    showAllProducts()
-                                }
-                                progressBar.visibility = View.GONE
-                                progressText.visibility = View.GONE
-                                downloadBtn.text = "آپدیت لیست آفلاین"
-                                downloadBtn.isEnabled = true
-                            }
-                        }
-                    } catch (e: Exception) {
-                        runOnUiThread { 
-                            progressText.text = "خطا در پردازش!"
-                            downloadBtn.isEnabled = true
-                        }
-                    }
-                }
-            })
+    // --- جستجو ---
+    private fun performSmartSearch(q: String) {
+        if (allProducts.isEmpty()) return
+        val normalizedQuery = normalizeText(q)
+        val keywords = normalizedQuery.split(Regex("\s+")).filter { it.isNotEmpty() }
+        if (keywords.isEmpty()) { showAllProducts(); return }
+
+        val results = allProducts.mapNotNull { product ->
+            val combined = "${normalizeText(product.name)} ${normalizeText(product.brand)}"
+            val matchCount = keywords.count { keyword -> combined.contains(keyword) }
+            if (matchCount > 0) Pair(matchCount, product) else null
         }
-        fetchPage()
-    }
-
-    // --- سرچ آنلاین ---
-    private fun fetchOnlineSearch(query: String) {
-        if (query.length < 2) return
-        adapter.updateData(listOf(Product("در حال جستجو...", "", 0)))
         
-        val url = "https://price-api-v2.aliinndd2.workers.dev/search?q=$query"
-        OkHttpClient().newCall(Request.Builder().url(url).build()).enqueue(object : okhttp3.Callback {
-            override fun onFailure(call: okhttp3.Call, e: IOException) {
-                runOnUiThread { adapter.updateData(listOf(Product("خطا در اتصال", "", 0))) }
-            }
-            override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
-                val body = response.body?.string() ?: return
-                try {
-                    val gson = Gson()
-                    val apiResp = gson.fromJson(body, ApiResponse::class.java)
-                    runOnUiThread {
-                        if (apiResp.success) {
-                            adapter.updateData(apiResp.data)
-                        } else {
-                            adapter.updateData(listOf(Product("نتیجه‌ای یافت نشد", "", 0)))
-                        }
-                    }
-                } catch (e: Exception) {
-                    runOnUiThread { adapter.updateData(listOf(Product("خطا در پردازش", "", 0))) }
-                }
-            }
-        })
+        val sorted = results.sortedByDescending { it.first }
+        adapter.updateData(
+            if (sorted.isEmpty()) listOf(Product("محصولی یافت نشد", "", 0)).toMutableList()
+            else sorted.map { it.second }.toMutableList()
+        )
     }
 
-    // --- توابع کمکی UI ---
+    // --- UI ---
     private fun getBrandColor(brand: String): Int {
         if (brand.isBlank()) return android.graphics.Color.GRAY
         val hash = brand.hashCode()
@@ -273,11 +236,11 @@ class MainActivity : AppCompatActivity() {
         override fun getCount(): Int = items.size
         override fun getItem(p: Int): Product = items[p]
         override fun getItemId(p: Int): Long = p.toLong()
-        override fun getView(pos: Int, cv: View?, parent: android.view.ViewGroup?): View {
+        override fun getView(pos: Int, cv: android.view.View?, parent: android.view.ViewGroup?): android.view.View {
             val view = cv ?: inflater.inflate(android.R.layout.simple_list_item_2, parent, false)
             val p = items[pos]
-            val t1 = view.findViewById<TextView>(android.R.id.text1)
-            val t2 = view.findViewById<TextView>(android.R.id.text2)
+            val t1 = view.findViewById<android.widget.TextView>(android.R.id.text1)
+            val t2 = view.findViewById<android.widget.TextView>(android.R.id.text2)
             
             t1.text = "${p.name} (${p.brand})"
             t1.textSize = 16f
@@ -296,37 +259,4 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAllProducts() { adapter.updateData(allProducts) }
-    
-    private fun performSmartSearch(q: String) {
-        if (allProducts.isEmpty()) return
-        var keys = q.split(" ").filter { it.length > 1 }.map { it.trim().lowercase() }
-        if (keys.isEmpty()) { showAllProducts(); return }
-        
-        // مرتب‌سازی کلمات: کلمات کوتاه‌تر اول بیان تا فیلتر اولیه وسیع‌تر باشه
-        keys = keys.sortedBy { it.length }
-        
-        // شروع با کل لیست
-        var currentList = allProducts
-        
-        // اعمال فیلتر آبشاری
-        for (key in keys) {
-            currentList = currentList.filter { 
-                it.name.lowercase().contains(key) || 
-                it.brand.lowercase().contains(key) 
-            }
-            // اگر وسط کار لیست خالی شد، دیگه ادامه نده
-            if (currentList.isEmpty()) break
-        }
-        
-        // امتیازدهی نهایی برای مرتب‌سازی بهتر نتایج باقی‌مونده
-        val scored = currentList.map { pr ->
-            val score = keys.count { k -> pr.name.lowercase().contains(k) }
-            Pair(score, pr)
-        }.sortedByDescending { it.first }
-        
-        adapter.updateData(
-            if (scored.isEmpty()) listOf(Product("محصولی با این مشخصات یافت نشد", "", 0)) 
-            else scored.map { it.second }
-        )
-    }
 }
