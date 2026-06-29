@@ -15,10 +15,9 @@ android {
         versionName = "1.0"
     }
 
-    // ✅ اضافه کردن بخش signingConfigs
     signingConfigs {
-        create("release") {
-            storeFile = file("../debug.keystore")
+        create("fixedDebug") {
+            storeFile = file("../debug.keystore") // ✅ مسیر اصلاح شده
             storePassword = "android"
             keyAlias = "androiddebugkey"
             keyPassword = "android"
@@ -26,11 +25,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("fixedDebug")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            // ✅ فعال‌سازی امضا برای ریلیز
-            signingConfig = signingConfigs.getByName("release")
+            signingConfig = signingConfigs.getByName("fixedDebug")
         }
     }
 
