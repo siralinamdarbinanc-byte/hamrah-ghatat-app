@@ -94,7 +94,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         OkHttpClient().newCall(
-            Request.Builder().url("https://price-api-v2.aliinndd2.workers.dev/search?q=a").build()
+            Request.Builder().url("https://price-api-v2.aliinndd2.workers.dev/search?q=").build()
         ).enqueue(object : okhttp3.Callback {
             override fun onFailure(call: okhttp3.Call, e: IOException) {
                 // اگر اینترنت نبود و کش هم نداشتیم
@@ -106,6 +106,7 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
                 val body = response.body?.string() ?: return
+                android.util.Log.d("YadakMarket", "API Response length: ${body.length}")
                 try {
                     val gson = Gson()
                     val apiResponse = gson.fromJson(body, ApiResponse::class.java)
