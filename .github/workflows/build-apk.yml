@@ -1,5 +1,6 @@
 name: Build Android APK
 
+# Updated to use gradlew instead of system gradle
 on:
   push:
     branches: [ main ]
