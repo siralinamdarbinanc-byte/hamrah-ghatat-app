@@ -14,6 +14,13 @@ import com.opencsv.CSVReader
 import java.io.InputStreamReader
 import java.text.DecimalFormat
 
+// تابع کمکی بیرون از کلاس برای دسترسی راحت
+fun normalizeText(text: String): String {
+    return text.trim().lowercase()
+        .replace("ي", "ی").replace("ك", "ک")
+        .replace(Regex("[\s\.\(\)\-\/,\:]+"), "") // Regex صحیح بدون فرار اضافی
+}
+
 data class Product(val name: String, val brand: String, val price: Long, val code: String = "") {
     fun uniqueKey(): String = "${normalizeText(name)}|${normalizeText(brand)}"
 }
@@ -29,12 +36,6 @@ class MainActivity : AppCompatActivity() {
     companion object {
         private const val PREFS_NAME = "YadakMarketPrefs"
         private const val KEY_PRODUCTS = "cached_products_json"
-        
-        fun normalizeText(text: String): String {
-            return text.trim().lowercase()
-                .replace("ي", "ی").replace("ك", "ک")
-                .replace(Regex("[\s\.\(\)\-\/,\:]+"), "")
-        }
     }
 
     private val filePickerLauncher = registerForActivityResult(
@@ -68,7 +69,6 @@ class MainActivity : AppCompatActivity() {
         adapter = ProductAdapter(this, emptyList())
         listView.adapter = adapter
         
-        // ✅ لود هوشمند: اول کش، اگر نبود از Assets
         loadInitialData()
         
         searchView.setOnQueryTextListener(object : SearchView.OnQueryTextListener {
@@ -86,9 +86,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun loadInitialData() {
-        // تلاش برای لود از کش (سریع‌ترین حالت)
         if (!loadFromCache()) {
-            // اگر کش نبود، لود از Assets (حالت آفلاین پایه)
             try {
                 val inputStream = assets.open("products.csv")
                 val reader = CSVReader(InputStreamReader(inputStream, "UTF-8"))
@@ -100,7 +98,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
                 reader.close()
-                saveToCache(allProducts) // ذخیره در کش برای دفعات بعد
+                saveToCache(allProducts)
                 showAllProducts()
             } catch (e: Exception) {
                 adapter.updateData(listOf(Product("خطا در خواندن فایل پایه", "", 0)).toMutableList())
@@ -114,7 +112,6 @@ class MainActivity : AppCompatActivity() {
             val reader = CSVReader(InputStreamReader(inputStream, "UTF-8"))
             val newRows = reader.readAll()
             
-            // ساخت مپ سریع برای جستجوی O(1)
             val existingMap = mutableMapOf<String, Int>()
             for ((index, product) in allProducts.withIndex()) {
                 existingMap[product.uniqueKey()] = index
@@ -142,12 +139,10 @@ class MainActivity : AppCompatActivity() {
             reader.close()
             inputStream.close()
             
-            // مرتب‌سازی و ذخیره
             allProducts.sortBy { it.name }
             saveToCache(allProducts)
             showAllProducts()
             
-            // نمایش گزارش
             adapter.updateData(
                 listOf(
                     Product("✅ بروزرسانی موفق!", "", 0),
