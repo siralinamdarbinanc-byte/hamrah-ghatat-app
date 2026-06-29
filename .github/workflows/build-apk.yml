@@ -21,18 +21,20 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install Android SDK components
+      - name: Install SDK components
         run: |
           sdkmanager "platforms;android-34"
           sdkmanager "build-tools;34.0.0"
-          sdkmanager "extras;google;m2repository"
-          sdkmanager "extras;android;m2repository"
+          sdkmanager --licenses
 
       - name: Make gradlew executable
         run: chmod +x gradlew
 
+      - name: Clean build
+        run: ./gradlew clean
+
       - name: Build APK
-        run: ./gradlew assembleRelease
+        run: ./gradlew assembleRelease --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
